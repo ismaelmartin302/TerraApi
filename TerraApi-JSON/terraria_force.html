@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Terraria recipes viewed using d3.layout.force</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.6/d3.min.js"></script>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: white;
+        color: black;
+        font-size: 12px;
+        font-family: sans-serif;
+      }
+      body {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      body > form {
+        flex-grow: 0;
+        flex-shrink: 0;
+      }
+      body > svg#chart {
+        flex-grow: 1;
+        flex-shrink: 1;
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      form {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: row;
+      }
+      form > * {
+        flex: 1 1;
+        position: relative;
+      }
+      form > input[type="range"]::before {
+        content: attr(title);
+        display: block;
+        text-align: center;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+
+        line-height: 1;
+
+        pointer-events: none;
+        /* https://stackoverflow.com/questions/826782/css-rule-to-disable-text-selection-highlighting */
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+
+      .node text,
+      .link text {
+        fill: #555753;
+        font-size: 10px;
+        text-anchor: middle;
+        dominant-baseline: central;
+        pointer-events: none;
+
+        /* https://stackoverflow.com/questions/826782/css-rule-to-disable-text-selection-highlighting */
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      .link polyline {
+        fill: none;
+        stroke-width: 3px;
+      }
+
+                       .link               text { display: none; }
+      .is-highlighting .link.is-ingredient text { display: block; }
+      .is-highlighting .link.is-over       text { display: block; }
+      .is-highlighting .link.is-result     text { display: block; }
+
+
+      .gfx-with-text-outline .node text,
+      .gfx-with-text-outline .link text {
+        text-shadow:
+          0px 1px 0 #fff,
+          1px 0px 0 #fff,
+          0px -1px 0 #fff,
+          -1px 0px 0 #fff,
+          ;
+      }
+
+      .gfx-with-marker                 .link               polyline { marker-mid: url(#gray_arrow); }
+      .gfx-with-marker.is-highlighting .link.is-ingredient polyline { marker-mid: url(#yellow_arrow); }
+      .gfx-with-marker.is-highlighting .link.is-over       polyline { marker-mid: url(#blue_arrow); }
+      .gfx-with-marker.is-highlighting .link.is-result     polyline { marker-mid: url(#green_arrow); }
+
+      .gfx-opaque.gfx-with-marker      .link               polyline { marker-mid: url(#lightgray_arrow); }
+      .gfx-opaque.gfx-with-marker.is-highlighting .link    polyline { marker-mid: url(#verylightgray_arrow); }
+
+
+      .link polyline { stroke: #888a85; }
+      .node circle { fill: #babdb6; }
+
+      .gfx-opaque                 .link polyline { stroke: #d3d7cf; }
+      .gfx-opaque.is-highlighting .link polyline { stroke: #eeeeec; }
+      .gfx-opaque.is-highlighting .node circle   { fill: #d3d7cf; }
+      .gfx-opaque.is-highlighting .node text     { fill: #babdb6; }
+
+      .gfx-transparent                 .link polyline { opacity: 0.25; }
+      .gfx-transparent.is-highlighting .link polyline { opacity: 0.0625; }
+      .gfx-transparent.is-highlighting .node circle   { opacity: 0.25; }
+      .gfx-transparent.is-highlighting .node text     { opacity: 0.25; }
+
+
+      .is-highlighting .link.is-ingredient polyline { opacity: 1; stroke: #edd400; }
+      .is-highlighting .link.is-over       polyline { opacity: 1; stroke: #729fcf; }
+      .is-highlighting .link.is-result     polyline { opacity: 1; stroke: #73d216; }
+      .is-highlighting .node.is-ingredient circle { opacity: 1; fill: #edd400; }
+      .is-highlighting .node.is-over       circle { opacity: 1; fill: #729fcf; }
+      .is-highlighting .node.is-result     circle { opacity: 1; fill: #73d216; }
+      .is-highlighting .node.is-ingredient text { opacity: 1; fill: #000; }
+      .is-highlighting .node.is-over       text { opacity: 1; fill: #000; }
+      .is-highlighting .node.is-result     text { opacity: 1; fill: #000; }
+
+      /* z-index is not supported for SVG.
+      .is-highlighting .is-ingredient { z-index: 9; }
+      .is-highlighting .is-over       { z-index: 9; }
+      .is-highlighting .is-result     { z-index: 9; }
+      */
+
+    </style>
+  </head>
+  <body>
+    <!--
+    <p>Based on <a href="http://bl.ocks.org/mbostock/4062045">Force-Directed Graph</a> and <a href="http://graus.nu/d3/">D3 DiGraph Test</a> and <a href="https://jsfiddle.net/jonnyc/uxdozyvu/">this jsfiddle</a>.</p>
+    -->
+
+    <form id="form_controls">
+      <input type="button" id="reset_zoom" value="Reset Pan and Zoom">
+      <input type="range" id="gfx_quality" min="1" max="4" value="1">
+      <input type="range" id="force_linkDistance" min="1" max="2000" value="100">
+      <input type="range" id="force_linkStrength" min="0" max="1" step="0.0001" value="0.5">
+      <input type="range" id="force_charge" min="-2000" max="0" value="-250">
+      <input type="range" id="force_gravity" min="0" max="1" step="0.0001" value="0.0625">
+      <input type="range" id="force_friction" min="0" max="1" step="0.0001" value="0.9">
+    </form>
+
+    <svg id="chart">
+      <defs>
+        <marker id="gray_arrow" markerWidth="4.5" markerHeight="4.5" viewBox="-1 -1 2 2" orient="auto">
+          <path fill="#888a85" d="M-1,-1 L1,0 -1,1 0,0 z" />
+        </marker>
+        <marker id="lightgray_arrow" markerWidth="4.5" markerHeight="4.5" viewBox="-1 -1 2 2" orient="auto">
+          <path fill="#d3d7cf" d="M-1,-1 L1,0 -1,1 0,0 z" />
+        </marker>
+        <marker id="verylightgray_arrow" markerWidth="4.5" markerHeight="4.5" viewBox="-1 -1 2 2" orient="auto">
+          <path fill="#eeeeec" d="M-1,-1 L1,0 -1,1 0,0 z" />
+        </marker>
+        <marker id="yellow_arrow" markerWidth="4.5" markerHeight="4.5" viewBox="-1 -1 2 2" orient="auto">
+          <path fill="#edd400" d="M-1,-1 L1,0 -1,1 0,0 z" />
+        </marker>
+        <marker id="green_arrow" markerWidth="4.5" markerHeight="4.5" viewBox="-1 -1 2 2" orient="auto">
+          <path fill="#73d216" d="M-1,-1 L1,0 -1,1 0,0 z" />
+        </marker>
+        <marker id="blue_arrow" markerWidth="4.5" markerHeight="4.5" viewBox="-1 -1 2 2" orient="auto">
+          <path fill="#729fcf" d="M-1,-1 L1,0 -1,1 0,0 z" />
+        </marker>
+      </defs>
+    </svg>
+
+    <script>
+      var chart_element = document.getElementById('chart');
+
+      var svg = d3.select('svg#chart');
+      var svg_g = svg.append('g');
+
+      var behavior_zoom = d3.behavior.zoom().on('zoom', function() {
+        svg_g.attr('transform', 'translate(' + d3.event.translate + ')' + ' scale(' + d3.event.scale + ')');
+      })
+
+      svg.call(behavior_zoom);
+
+      var force = d3.layout.force()
+        .size([chart_element.offsetWidth, chart_element.offsetHeight]);
+
+      function update_input() {
+        var names = ['linkDistance', 'linkStrength', 'charge', 'gravity', 'friction'];
+        names.forEach(function(name) {
+          var elem = document.getElementById('force_' + name);
+          var value = parseFloat(elem.value);
+          var value_as_string = (parseFloat(elem.max) > 1 || parseFloat(elem.min) < -1) ? value.toString() : value.toFixed(4);
+          elem.title = name + ' = ' + value_as_string;
+
+          force[name](value);
+        });
+        force.start()
+
+        var gfx = document.getElementById('gfx_quality');
+        switch(parseInt(gfx.value, 10)) {
+          case 1:
+            chart_element.classList.toggle('gfx-with-text-outline', false);
+            chart_element.classList.toggle('gfx-with-marker', false);
+            chart_element.classList.toggle('gfx-transparent', false);
+            chart_element.classList.toggle('gfx-opaque', true);
+            gfx.title = 'Rendering Quality = LOWEST';
+            break;
+          case 2:
+            chart_element.classList.toggle('gfx-with-text-outline', true);
+            chart_element.classList.toggle('gfx-with-marker', false);
+            chart_element.classList.toggle('gfx-transparent', false);
+            chart_element.classList.toggle('gfx-opaque', true);
+            gfx.title = 'Rendering Quality = LOW';
+            break;
+          case 3:
+            chart_element.classList.toggle('gfx-with-text-outline', true);
+            chart_element.classList.toggle('gfx-with-marker', true);
+            chart_element.classList.toggle('gfx-transparent', false);
+            chart_element.classList.toggle('gfx-opaque', true);
+            gfx.title = 'Rendering Quality = MEDIUM';
+            break;
+          case 4:
+            chart_element.classList.toggle('gfx-with-text-outline', true);
+            chart_element.classList.toggle('gfx-with-marker', true);
+            chart_element.classList.toggle('gfx-transparent', true);
+            chart_element.classList.toggle('gfx-opaque', false);
+            gfx.title = 'Rendering Quality = HIGH';
+            break;
+        }
+      }
+
+      var form = document.getElementById('form_controls');
+      form.addEventListener('input', update_input);
+
+      document.getElementById('reset_zoom').addEventListener('click', function(ev) {
+        behavior_zoom.translate([0, 0]);
+        behavior_zoom.scale(1);
+        behavior_zoom.event(svg);
+      });
+
+      update_input();
+
+      // https://stackoverflow.com/questions/7871425/is-there-a-way-to-zoom-into-a-d3-force-layout-graph
+      // https://stackoverflow.com/questions/17953106/why-does-d3-js-v3-break-my-force-graph-when-implementing-zooming-when-v2-doesnt/17976205#17976205
+      // https://jsfiddle.net/jonnyc/uxdozyvu/
+      var behavior_drag = force.drag()
+        .on('dragstart', function(d) {
+          d3.event.sourceEvent.stopPropagation();
+        });
+
+      d3.json('terraria_d3_digraph.json', function(error, graph) {
+        if (error) throw error;
+
+        var adjacent = {};
+        graph.nodes.forEach(function(node, index) {
+          adjacent[index] = {};
+        });
+        graph.links.forEach(function(link, index) {
+          adjacent[link.source][link.target] = true;
+        });
+
+        // Note: Calling force.nodes() or force.links() will modify the arrays,
+        // expanding each element to full objects.
+        // https://github.com/mbostock/d3/wiki/Force-Layout#links
+        force
+          .nodes(graph.nodes)
+          .links(graph.links)
+          .start();
+
+        var link = svg_g.selectAll('.link')
+          .data(graph.links)
+          .enter().append('g')
+          .classed('link', true);
+
+        link.append('polyline');
+        link.append('text')
+          .text(function(d) { return d.label; });
+
+        var node = svg_g.selectAll('.node')
+          .data(graph.nodes)
+          .enter().append('g')
+          .classed('node', true);
+
+        node.append('circle')
+          .attr('r', 10)
+          .call(behavior_drag);
+
+        node.append('text')
+          .text(function(d) { return d.name; });
+
+        node
+          .on('mouseover', function (d) {
+            svg.classed('is-highlighting', true);
+            node.classed('is-over'      , function(o) { return o === d; });
+            node.classed('is-ingredient', function(o) { return !!adjacent[o.index][d.index]; });
+            node.classed('is-result'    , function(o) { return !!adjacent[d.index][o.index]; });
+
+            link.classed('is-ingredient', function(o) { return o.target === d; });
+            link.classed('is-result'    , function(o) { return o.source === d; });
+          })
+          .on('mouseout', function (d) {
+            svg.classed('is-highlighting', false);
+            node.classed('is-over is-ingredient is-result', false);
+            link.classed('is-over is-ingredient is-result', false);
+          });
+
+        link
+          .on('mouseover', function (d) {
+            svg.classed('is-highlighting', true);
+            link.classed('is-over'      , function(o) { return o === d; });
+
+            node.classed('is-ingredient', function(o) { return o === d.source; });
+            node.classed('is-result'    , function(o) { return o === d.target; });
+          })
+          .on('mouseout', function (d) {
+            svg.classed('is-highlighting', false);
+            node.classed('is-over is-ingredient is-result', false);
+            link.classed('is-over is-ingredient is-result', false);
+          });
+
+        force.on('tick', function() {
+          link.select('polyline').attr('points', function(d) {
+              return d.source.x + ',' + d.source.y +
+                ' ' + (d.source.x + d.target.x) / 2 + ',' + (d.source.y + d.target.y) / 2 +
+                ' ' + d.target.x + ',' + d.target.y;
+          });
+          link.select('text').attr('x', function(d) { return (d.source.x + d.target.x) / 2; });
+          link.select('text').attr('y', function(d) { return (d.source.y + d.target.y) / 2; });
+
+          node.attr('transform', function(d) { return 'translate(' + d.x + ',' + d.y + ')';});
+        });
+      });
+    </script>
+  </body>
+</html>

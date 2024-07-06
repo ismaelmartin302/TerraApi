@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Terraria - Crate opening simulator</title>
+		<!-- http://www.listjs.com/ -->
+		<!-- https://github.com/javve/list.js/issues/363 -->
+		<script src="javve-list-v1.1.1.min.js" async defer></script>
+		<style>
+			html, body {
+				background: white;
+				color: black;
+				font-family: sans-serif;
+				font-size: 13px;
+			}
+			body {
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: center;
+				align-items: flex-start;
+			}
+			body > section.input_section {
+				flex: none;
+				width: 14em;
+			}
+			body > section.output_section {
+				flex: 1 1 0;
+				flex: 1 1 content;
+				min-width: 45em;
+				max-width: 65em;
+			}
+			label {
+				display: block;
+			}
+
+			input[type="checkbox"] {
+				vertical-align: middle;
+				margin: 0;
+				width: 1em;
+				height: 1em;
+			}
+			input[type="number"] {
+				text-align: right;
+			}
+			input[type="submit"] {
+				display: block;
+				box-sizing: border-box;
+				width: 100%;
+			}
+
+			.crate_label input[type="number"] {
+				width: 4em;
+			}
+			.samples_label input[type="number"] {
+				width: 5em;
+			}
+
+			input.search {
+				box-sizing: border-box;
+				width: 100%;
+			}
+
+			table {
+				border-collapse: collapse;
+				margin: 0;
+				width: 100%;
+				table-layout: fixed;
+			}
+			thead th      { width: 5em; }
+			thead th.iqr  { width: 4em; }
+			thead th.sd   { width: 4em; }
+			thead th.name { width: auto; }
+			thead th.id   { width: 3em; }
+
+			thead                            { background-color: #666; color: white; }
+			tbody > tr:nth-child(odd)        { background-color: #DDD; color: black; }
+			tbody > tr:nth-child(even)       { background-color: #EEE; color: black; }
+			tbody > tr:nth-child(odd):hover  { background-color: #CDE; }
+			tbody > tr:nth-child(even):hover { background-color: #DEF; }
+
+			th, td {
+				padding: 0.5ex;
+				text-align: right;
+			}
+			th.name, td.name {
+				text-align: left;
+				padding-left: 1em;
+			}
+
+			td.q2,
+			td.mean {
+				font-weight: bold;
+			}
+			td.iqr,
+			td.sd {
+				font-style: italic;
+			}
+
+			th.sort {
+				cursor: pointer;
+				white-space: nowrap;
+			}
+			th.sort:hover {
+				background: #777;
+			}
+			.sort:after {
+				display: inline-block;
+				content: "";
+			}
+			.sort.asc:after {
+				content: "▲";
+			}
+			.sort.desc:after {
+				content: "▼";
+			}
+		</style>
+	</head>
+	<body>
+		<section class="input_section">
+			<form id="input_form">
+				<div id="crate_input_block">
+					<template id="crate_input_template">
+						<label class="crate_label"><input type="number" min="0" value="0"> <span></span></label>
+					</template>
+				</div>
+				<hr>
+				<label class="checkbox" title="Are the crates going to be opened in a hardmode world?"><input type="checkbox" id="hardmode_input"> Hardmode</label>
+				<label class="checkbox" title="Round values to integers or show up to 2 decimal digits?"><input type="checkbox" id="decimal_input"> Show decimal digits</label>
+				<hr>
+				<input type="submit" value="Run simulation">
+				<label class="samples_label" title="The amount of simulations (i.e. samples) to be run."><input type="number" id="samples_input" min="1" value="50"> times</label>
+			</form>
+			<p>Inspired by <a href="http://forums.terraria.org/index.php?threads/crates-fishing-for-hardmode-ore.18097/">Bethany spreadsheet</a>.</p>
+			<p>Updated as Terraria v1.3.0.8.</p>
+			<p><a href="https://github.com/denilsonsa/terraria-stuff">Available on GitHub</a>.</p>
+		</section>
+		<section class="output_section">
+			<input type="search" class="search" placeholder="Filter items 🔍">
+			<table>
+				<thead>
+					<tr>
+						<th class="sort q1"       data-sort="q1"   title="First quartile, AKA 25th percentile">Q₁</th>
+						<th class="sort q2"       data-sort="q2"   title="Second quartile, AKA 50th percentile, AKA median">Q₂</th>
+						<th class="sort q3"       data-sort="q3"   title="Third quartile, AKA 75th percentile">Q₃</th>
+						<th class="sort iqr"      data-sort="iqr"  title="Interquartile range, AKA Q₃ − Q₁">IQR</th>
+						<th class="sort mean"     data-sort="mean" title="Mean, AKA average">Mean</th>
+						<th class="sort sd"       data-sort="sd"   title="Standard deviation">SD</th>
+						<th class="sort max"      data-sort="max"  title="Maximum outcome from the simulations">Max</th>
+						<th class="sort name asc" data-sort="name">Item</th>
+						<th class="sort id"       data-sort="id"  >id</th>
+					</tr>
+				</thead>
+				<tbody class="list">
+					<tr>
+						<td class="q1"  ></td>
+						<td class="q2"  ></td>
+						<td class="q3"  ></td>
+						<td class="iqr" ></td>
+						<td class="mean"></td>
+						<td class="sd"  ></td>
+						<td class="max" ></td>
+						<td class="name"></td>
+						<td class="id"  ></td>
+					</tr>
+				</tbody>
+			</table>
+		</section>
+		<script>
+			'use strict';
+
+			//////////////////////////////////////////////////
+			// Misc. library-style functions
+
+			// https://stackoverflow.com/questions/1374126/how-to-extend-an-existing-javascript-array-with-another-array
+			Array.prototype.extend = function (other_array) {
+				other_array.forEach(function(v) {this.push(v);}, this);
+			}
+
+			// rand(4) -> random integer from {0, 1, 2, 3}
+			// rand(2, 4) -> random integer from {2, 3}
+			function rand(min, max) {
+				if (min === undefined) {
+					throw 'rand() must receive one or two parameters.';
+				}
+				if (max === undefined) {
+					max = min;
+					min = 0;
+				}
+				return Math.floor(Math.random() * (max - min)) + min;
+			}
+
+			// chance(1, 20) -> returns true with 1/20 of chance, and false with 19/20 of chance.
+			function chance(numerator, denominator) {
+				return rand(denominator) < numerator;
+			}
+
+			// pick_one(1, 2, 3) -> returns one of the arguments
+			// pick_one([1, 2, 3]) -> returns one of the elements
+			// pick_one(1) -> if the only argument is not an array, just return it
+			function pick_one() {
+				var items;
+				if (arguments.length > 1) {
+					items = arguments;
+				} else {
+					items = arguments[0];
+					if (!Array.isArray(items)) {
+						return items;
+					}
+				}
+				return items[rand(items.length)];
+			}
+
+			//////////////////////////////////////////////////
+			// Terraria item-related functions.
+
+			function loot(items, qty) {
+				return {
+					'id': pick_one(items),
+					'qty': qty,
+				}
+			}
+
+			// stack_items([ [{}, {}, …], [{}, {}, …], … ]) -> returns [{}, {}, …]
+			// Returns a new array with all duplicate items stacked together.
+			// Preserves the original item order (although it doesn't need to).
+			function stack_items(array_of_arrays_of_items) {
+				var ret = [];
+				var map = {};
+				array_of_arrays_of_items.forEach(function(items) {
+					items.forEach(function(item, index) {
+						if (map[item.id]) {
+							map[item.id].qty += item.qty;
+						} else {
+							map[item.id] = {
+								'id': item.id,
+								'qty': item.qty,
+							};
+							ret.push(map[item.id]);
+						}
+					});
+				});
+				return ret;
+			}
+
+			//////////////////////////////////////////////////
+			// Items and crates.
+
+			var ITEM_ID = {
+				// Some useful Vim commands I used while building this list:
+				// :g/ \(Ore\|Bar\|Potion\|Coin\|Crate\|Bait\)\>/y A
+				// :%s/^\([^\t']\+\)\t\([0-9]\+\)$/'\2': "\1",/
+				// :nmap <F1> yy<c-W>lp<c-W>h
+				'11': "Iron Ore",
+				'12': "Copper Ore",
+				'13': "Gold Ore",
+				'14': "Silver Ore",
+				'19': "Gold Bar",
+				'20': "Copper Bar",
+				'21': "Silver Bar",
+				'22': "Iron Bar",
+				'28': "Lesser Healing Potion",
+				'56': "Demonite Ore",
+				'57': "Demonite Bar",
+				'71': "Copper Coin",
+				'72': "Silver Coin",
+				'73': "Gold Coin",
+				'74': "Platinum Coin",
+				'110': "Lesser Mana Potion",
+				'117': "Meteorite Bar",
+				'175': "Hellstone Bar",
+				'188': "Healing Potion",
+				'189': "Mana Potion",
+				'226': "Lesser Restoration Potion",
+				'227': "Restoration Potion",
+				'288': "Obsidian Skin Potion",
+				'289': "Regeneration Potion",
+				'290': "Swiftness Potion",
+				'291': "Gills Potion",
+				'292': "Ironskin Potion",
+				'293': "Mana Regeneration Potion",
+				'294': "Magic Power Potion",
+				'295': "Featherfall Potion",
+				'296': "Spelunker Potion",
+				'297': "Invisibility Potion",
+				'298': "Shine Potion",
+				'299': "Night Owl Potion",
+				'300': "Battle Potion",
+				'301': "Thorns Potion",
+				'302': "Water Walking Potion",
+				'303': "Archery Potion",
+				'304': "Hunter Potion",
+				'305': "Gravitation Potion",
+				'364': "Cobalt Ore",
+				'365': "Mythril Ore",
+				'366': "Adamantite Ore",
+				'381': "Cobalt Bar",
+				'382': "Mythril Bar",
+				'391': "Adamantite Bar",
+				'499': "Greater Healing Potion",
+				'500': "Greater Mana Potion",
+				'678': "Red Potion",
+				'699': "Tin Ore",
+				'700': "Lead Ore",
+				'701': "Tungsten Ore",
+				'702': "Platinum Ore",
+				'703': "Tin Bar",
+				'704': "Lead Bar",
+				'705': "Tungsten Bar",
+				'706': "Platinum Bar",
+				'855': "Lucky Coin",
+				'880': "Crimtane Ore",
+				'947': "Chlorophyte Ore",
+				'1006': "Chlorophyte Bar",
+				'1104': "Palladium Ore",
+				'1105': "Orichalcum Ore",
+				'1106': "Titanium Ore",
+				'1184': "Palladium Bar",
+				'1191': "Orichalcum Bar",
+				'1198': "Titanium Bar",
+				'1225': "Hallowed Bar",
+				'1257': "Crimtane Bar",
+				'1552': "Shroomite Bar",
+				'1715': "Table Bar",
+				'2209': "Super Mana Potion",
+				'2322': "Mining Potion",
+				'2323': "Heartreach Potion",
+				'2324': "Calming Potion",
+				'2325': "Builder Potion",
+				'2326': "Titan Potion",
+				'2327': "Flipper Potion",
+				'2328': "Summoning Potion",
+				'2329': "Dangersense Potion",
+				'2334': "Wooden Crate",
+				'2335': "Iron Crate",
+				'2336': "Golden Crate",
+				'2344': "Ammo Reservation Potion",
+				'2345': "Lifeforce Potion",
+				'2346': "Endurance Potion",
+				'2347': "Rage Potion",
+				'2348': "Inferno Potion",
+				'2349': "Wrath Potion",
+				'2350': "Recall Potion",
+				'2351': "Teleportation Potion",
+				'2352': "Love Potion",
+				'2353': "Stink Potion",
+				'2354': "Fishing Potion",
+				'2355': "Sonar Potion",
+				'2356': "Crate Potion",
+				'2359': "Warmth Potion",
+				'2674': "Apprentice Bait",
+				'2675': "Journeyman Bait",
+				'2676': "Master Bait",
+				'2756': "Gender Change Potion",
+				'2997': "Wormhole Potion",
+				'3203': "Corrupt Crate",
+				'3204': "Crimson Crate",
+				'3205': "Dungeon Crate",
+				'3206': "Sky Crate",
+				'3207': "Hallowed Crate",
+				'3208': "Jungle Crate",
+				'3261': "Spectre Bar",
+				'3467': "Luminite Bar",
+				'3544': "Super Healing Potion",
+				// Plus a bunch of hand-picked items:
+				'64': "Vilethorn",
+				'65': "Starfury",
+				'96': "Musket",
+				'111': "Band of Starpower",
+				'115': "Shadow Orb",
+				'158': "Lucky Horseshoe",
+				'159': "Shiny Red Balloon",
+				'162': "Ball O' Hurt",
+				'211': "Feral Claws",
+				'212': "Anklet of the Wind",
+				'213': "Staff of Regrowth",
+				'285': "Aglet",
+				'502': "Crystal Shard",
+				'520': "Soul of Light",
+				'521': "Soul of Night",
+				'522': "Cursed Flame",
+				'800': "The Undertaker",
+				'802': "The Rotted Fork",
+				'946': "Umbrella",
+				'953': "Climbing Claws",
+				'964': "Boomstick",
+				'997': "Extractinator",
+				'1256': "Crimson Rod",
+				'1290': "Panic Necklace",
+				'1332': "Ichor",
+				'2292': "Fiberglass Fishing Pole",
+				'2424': "Anchor",
+				'2491': "Hardy Saddle",
+				'2501': "Ginger Beard",
+				'2587': "Tartar Sauce",
+				'2608': "Falcon Blade",
+				'3062': "Crimson Heart",
+				'3064': "Enchanted Sundial",
+				'3068': "Guide to Plant Fiber Cordage",
+				'3084': "Radar",
+				'3085': "Golden Lock Box",
+				'3200': "Sailfish Boots",
+				'3201': "Tsunami in a Bottle",
+			};
+
+			function common_extra_crate_open_code(hardmode, crate_type) {
+				var items = [];
+				while (items.length === 0) {
+					if (crate_type === 'corrupt' && chance(1, 6) && items.length === 0) items.push(loot([162, 111, 96, 115, 64], 1));
+					if (crate_type === 'crimson' && chance(1, 6) && items.length === 0) items.push(loot([800, 802, 1256, 1290, 3062], 1));
+					if (crate_type === 'dungeon' && chance(1, 6) && items.length === 0) items.push(loot([3085], 1));
+					if (crate_type === 'sky'     && chance(1, 6) && items.length === 0) items.push(loot([158, 65, 159], 1));
+					if (crate_type === 'jungle'  && chance(1, 6) && items.length === 0) items.push(loot([212, 964, 211, 213, 2292], 1));
+					if (chance(1, 4)) items.push(loot([73], rand(5, 13)));
+					if (chance(1, 4)) {
+						var tmp = loot([22, 21, 19, 704, 705, 706], rand(10, 21));
+						if (chance(2, 3) && hardmode) {
+							tmp = loot([381, 382, 391, 1184, 1191, 1198], rand(10, 21));
+							tmp.qty -= rand(3);
+						}
+						items.push(tmp);
+					}
+				}
+				if (chance(1, 4)) items.push(loot([288, 296, 304, 305, 2322, 2323], rand(2, 5)));
+				if (chance(1, 2)) items.push(loot([188, 189], rand(5, 18)));
+				if (chance(1, 2)) items.push(loot([2676, 2675], rand(2, 7)));
+				if (hardmode) {
+					if (crate_type === 'corrupt') {
+						if (chance(1, 2)) items.push(loot([521], rand(2, 6)));
+						if (chance(1, 2)) items.push(loot([522], rand(2, 6)));
+					}
+					if (crate_type === 'crimson') {
+						if (chance(1, 2)) items.push(loot([521], rand(2, 6)));
+						if (chance(1, 2)) items.push(loot([1332], rand(2, 6)));
+					}
+					if (crate_type === 'hallowed') {
+						if (chance(1, 2)) items.push(loot([520], rand(2, 6)));
+						if (chance(1, 2)) items.push(loot([502], rand(4, 11)));
+					}
+				}
+				return items;
+			}
+
+			var CRATES = [
+				{
+					'name': 'Wooden Crate',
+					'itemid': 2334,
+					'open': function(hardmode) {
+						var items = [];
+						while (items.length === 0) {
+							if (chance(1, 200) && items.length === 0 &&  hardmode) items.push(loot([3064], 1));
+							if (chance(1,  40) && items.length === 0             ) items.push(loot([3200], 1));
+							if (chance(1,  40) && items.length === 0             ) items.push(loot([3201], 1));
+							if (chance(1,  25) && items.length === 0 &&  hardmode) items.push(loot([2424], 1));
+							if (chance(1,  45)                                   ) items.push(loot([285, 953, 946, 3068, 3084], 1));
+							if (chance(1,  50) && items.length === 0 && !hardmode) items.push(loot([997], 1));
+							if (chance(1,   7)) {
+								switch(rand(3)) {
+									case 0:
+										items.push(loot([73], rand(1, 6))); break;
+									case 1:
+									case 2:
+										items.push(loot([72], rand(20, 91))); break;
+								}
+							}
+							if (chance(1,   7)) {
+								var tmp = loot([12, 11, 14, 13, 699, 700, 701, 702], rand(8, 21));
+								if (chance(1, 2) && hardmode) {
+									tmp = loot([364, 365, 366, 1104, 1105, 1106], rand(8, 21));
+								}
+								items.push(tmp);
+							}
+							if (chance(1,   8)) {
+								var tmp = loot([20, 22, 21, 19, 703, 704, 705, 706], rand(2, 8));
+								if (chance(1, 2) && hardmode) {
+									tmp = loot([381, 382, 391, 1184, 1191, 1198], rand(2, 8));
+									tmp.qty -= rand(2);
+								}
+								items.push(tmp);
+							}
+							if (chance(1,   7)) items.push(loot([288, 290, 292, 299, 298, 304, 291, 2322, 2323, 2329], rand(1, 4)));
+						}
+						if (chance(1, 3)) items.push(loot([28, 110], rand(5, 16)));
+						if (chance(1, 3)) items.push(loot([2675, 2674], rand(1, 5)));
+						return items;
+					}
+				},
+				{
+					'name': 'Iron Crate',
+					'itemid': 2335,
+					'open': function(hardmode) {
+						var items = [];
+						while (items.length === 0) {
+							if (chance(1, 60) && items.length === 0 &&  hardmode) items.push(loot([3064], 1));
+							if (chance(1, 25) && items.length === 0             ) items.push(loot([2501], 1));
+							if (chance(1, 20) && items.length === 0             ) items.push(loot([2587], 1));
+							if (chance(1, 15) && items.length === 0             ) items.push(loot([2608], 1));
+							if (chance(1, 20) && items.length === 0             ) items.push(loot([3200], 1));
+							if (chance(1, 20) && items.length === 0             ) items.push(loot([3201], 1));
+							if (chance(1,  4)) items.push(loot([73], rand(5, 11)));
+							if (chance(1,  4)) {
+								var tmp = loot([20, 22, 21, 19, 703, 704, 705, 706], rand(6, 15));
+								if (chance(2, 3) && hardmode) {
+									tmp = loot([381, 382, 391, 1184, 1191, 1198], rand(6, 15));
+									tmp.qty -= rand(2);
+								}
+								items.push(tmp);
+							}
+							if (chance(1,  4)) items.push(loot([288, 296, 304, 305, 2322, 2323, 2324, 2327], rand(2, 5)));
+						}
+						if (chance(1, 2)) items.push(loot([188, 189], rand(5, 16)));
+						if (chance(1, 2)) items.push(loot([2676, 2675, 2675], rand(2, 5)));
+						return items;
+					}
+				},
+				{
+					'name': 'Golden Crate',
+					'itemid': 2336,
+					'open': function(hardmode) {
+						var items = [];
+						while (items.length === 0) {
+							if (chance(1, 20) && items.length === 0 &&  hardmode) items.push(loot([3064], 1));
+							if (chance(1, 10) && items.length === 0             ) items.push(loot([2491], 1));
+							if (chance(1,  3)) items.push(loot([73], rand(8, 21)));
+							if (chance(1,  3)) {
+								var tmp = loot([21, 19, 705, 706], rand(15, 31));
+								if (chance(2, 3) && hardmode) {
+									tmp = loot([382, 391, 1191, 1198], rand(15, 31));
+								}
+								items.push(tmp);
+							}
+							if (chance(1,  3)) items.push(loot([288, 296, 305, 2322, 2323], rand(2, 6)));
+						}
+						if (chance(1, 2)) items.push(loot([499, 500], rand(5, 21)));
+						if (chance(2, 3)) items.push(loot([2676], rand(3, 8)));
+						return items;
+					}
+				},
+				{
+					'name': 'Corrupt Crate',
+					'itemid': 3203,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'corrupt');
+					}
+				},
+				{
+					'name': 'Crimson Crate',
+					'itemid': 3204,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'crimson');
+					}
+				},
+				{
+					'name': 'Dungeon Crate',
+					'itemid': 3205,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'dungeon');
+					}
+				},
+				{
+					'name': 'Jungle Crate',
+					'itemid': 3208,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'jungle');
+					}
+				},
+				{
+					'name': 'Sky Crate',
+					'itemid': 3206,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'sky');
+					}
+				},
+				{
+					'name': 'Hallowed Crate',
+					'itemid': 3207,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'hallowed');
+					}
+				}
+			];
+
+			//////////////////////////////////////////////////
+			// Statistics.
+
+			// https://en.wikipedia.org/wiki/Median#Medians_for_samples
+			function median(samples) {
+				var i = Math.floor((samples.length - 1) / 2);
+				var j = Math.ceil( (samples.length - 1) / 2);
+				return (samples[i] + samples[j]) / 2;
+			}
+
+			// q is 1 or 2 or 3.
+			// q == 2 returns the median.
+			// https://en.wikipedia.org/wiki/Quartile#Computing_methods
+			// The different methods are less relevant when the number of samples is high enough.
+			function quartile(samples, q) {
+				var i = Math.floor(q * (samples.length - 1) / 4);
+				var j = Math.ceil( q * (samples.length - 1) / 4);
+				return (samples[i] + samples[j]) / 2;
+			}
+
+			function mean(samples) {
+				var sum = samples.reduce(function(a, b) {
+					return a + b;
+				}, 0);
+				return sum / samples.length;
+			}
+
+			function variance(samples, mean) {
+				var squares_sum = samples.reduce(function(a, b) {
+					return a + Math.pow(b - mean, 2);
+				}, 0);
+				return squares_sum / samples.length;
+			}
+
+			function std_dev(samples, mean) {
+				return Math.sqrt(variance(samples, mean));
+			}
+
+			function max(samples) {
+				return samples.reduce(function(a, b) {
+					return Math.max(a, b);
+				}, 0);
+			}
+
+			//////////////////////////////////////////////////
+			// Simulation.
+
+			function simulate(opts) {
+				if (opts.crate_counts.length !== CRATES.length) {
+					throw 'simulate() crate_counts parameter has a different length than CRATES Array.';
+				}
+
+				var list_of_lists_of_items = [];
+				CRATES.forEach(function(crate, index) {
+					for (var i = 0; i < opts.crate_counts[index]; i++) {
+						list_of_lists_of_items.push(CRATES[index].open(opts.is_hardmode));
+					}
+				});
+
+				return stack_items(list_of_lists_of_items);
+			}
+
+			function simulate_several(opts) {
+				// data[id] -> array of amounts; each amount correspond to a single simulation.
+				var data = {};
+				// List of known ids.
+				var ids = [];
+				// List of objects.
+				var ret = [];
+
+				for (var sample = 0; sample < opts.samples; sample++) {
+					// List of objects like this: {'id': 123, 'qty': 123}.
+					var items = simulate(opts);
+					items.forEach(function(item, index) {
+						if (data[item.id] === undefined) {
+							data[item.id] = [];
+							ids.push(item.id);
+						}
+						data[item.id].push(item.qty);
+					});
+				}
+
+				ids.forEach(function(id) {
+					var population = data[id];
+
+					// Adding zeroes for when an item did not show up in a simulation.
+					// Making sure all populations have the expected length.
+					while (population.length < opts.samples) {
+						population.push(0);
+					}
+
+					// Required for calculating quartiles and median.
+					// Well, not strictly required (there are other algorithms), but easy enough and fast enough.
+					// Also: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort
+					population.sort(function(a, b) { return a - b; });
+
+					var result = {
+						// 'population': population,
+						'id': id,
+						'name': ITEM_ID[id],
+						'q1': quartile(population, 1),
+						'q2': quartile(population, 2),
+						'q3': quartile(population, 3),
+						'mean': mean(population),
+						'max': max(population),
+					};
+					result.iqr = result.q3 - result.q1;
+					result.sd = std_dev(population, result.mean);
+
+					ret.push(result);
+				});
+
+				return ret;
+			}
+
+			//////////////////////////////////////////////////
+			// UI.
+
+			function create_crate_input(crate_id, name) {
+				var template = document.getElementById('crate_input_template');
+				var row = document.importNode(template.content, true);
+				var input = row.querySelector('input');
+				input.id = crate_id;
+				var span = row.querySelector('span');
+				span.textContent = name;
+				return row;
+			}
+
+			function read_inputs() {
+				var crate_counts = [];
+				CRATES.forEach(function(crate, index) {
+					crate_counts[index] = parseInt(document.getElementById('crate' + index).value, 10) || 0;
+				});
+				return {
+					'crate_counts': crate_counts,
+					'is_hardmode': document.getElementById('hardmode_input').checked,
+					'decimal_digits': document.getElementById('decimal_input').checked,
+					'samples': parseInt(document.getElementById('samples_input').value, 10) || 1,
+				};
+			}
+
+			function build_output(data, opts) {
+				// Formatting the numbers.
+				var one_digit_attributes = ['q1', 'q2', 'q3', 'iqr'];
+				var two_digit_attributes = ['mean', 'sd'];
+				var all_attributes = one_digit_attributes.concat(two_digit_attributes);
+				if (opts.decimal_digits) {
+					data.forEach(function(data_item) {
+						one_digit_attributes.forEach(function(attr) {
+							data_item[attr] = data_item[attr].toFixed(1);
+						});
+						two_digit_attributes.forEach(function(attr) {
+							data_item[attr] = data_item[attr].toFixed(2);
+						});
+					});
+				} else {
+					data.forEach(function(data_item) {
+						all_attributes.forEach(function(attr) {
+							data_item[attr] = Math.round(data_item[attr]);
+						});
+					});
+				}
+
+				// It would be nice if search/sorting would be kept applied
+				// correctly even after modifying the list. Well, since
+				// that's not the case, I'm working around it here.
+
+				// Saving sorting state.
+				var sort_elem = document.querySelector('.output_section .sort.asc') || document.querySelector('#results-table .sort.desc');
+				var sort_column = null;
+				var sort_order = null;
+				if (sort_elem) {
+					sort_column = sort_elem.dataset.sort;
+					sort_order = sort_elem.classList.contains('asc') ? 'asc' : 'desc';
+				}
+
+				// Saving search state.
+				var search_text = document.querySelector('.output_section input.search').value;
+
+				// Updating the list.
+				g_results_list.clear();
+				g_results_list.add(data);
+
+				// Re-searching.
+				if (search_text) {
+					// Note: searching will reset the sorting.
+					g_results_list.search(search_text);
+				}
+
+				// Re-sorting.
+				// Sorting gets lost whenever the list is modified.
+				if (sort_column) {
+					g_results_list.sort(sort_column, {'order': sort_order});
+				}
+			}
+
+			function form_submit_handler(ev) {
+				ev.preventDefault();
+				ev.stopPropagation();
+
+				var opts = read_inputs();
+				var data = simulate_several(opts);
+				build_output(data, opts);
+			}
+
+			function init() {
+				var input_form = document.getElementById('input_form');
+				input_form.addEventListener('submit', form_submit_handler);
+
+				var crate_input_block = document.getElementById('crate_input_block');
+				CRATES.forEach(function(crate, index) {
+					var row = create_crate_input('crate' + index, crate.name);
+					crate_input_block.appendChild(row);
+				});
+
+				g_results_list = new List(document.querySelector('.output_section'), {
+					'valueNames': ['min', 'avg', 'max', 'sd', 'name', 'id'],
+					'page': 5000,
+				});
+				g_results_list.clear();
+			}
+
+			var g_results_list;
+			window.addEventListener('load', init);
+		</script>
+	</body>
+</html>

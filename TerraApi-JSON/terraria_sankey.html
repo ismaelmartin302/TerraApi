@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Terraria recipes viewed using d3.chart.sankey</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.6/d3.min.js"></script>
+    <script src="https://rawgit.com/newrelic-forks/d3-plugins-sankey/v1.1.0/sankey.js"></script>
+    <script src="https://rawgit.com/misoproject/d3.chart/master/d3.chart.min.js"></script>
+    <script src="https://rawgit.com/q-m/d3.chart.sankey/master/d3.chart.sankey.min.js"></script>
+    <style>
+      html, body {
+        background: white;
+        color: black;
+        font-size: 12px;
+        font-family: sans-serif;
+      }
+      .node rect {
+        fill-opacity: .9;
+        shape-rendering: crispEdges;
+        stroke-width: 0;
+      }
+      .node text {
+        text-shadow: 0 1px 0 #fff;
+      }
+      .link {
+        fill: none;
+        stroke: #000;
+        stroke-opacity: .2;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Based on <a href="http://bl.ocks.org/wvengen/cab9b01816490edb7083">d3.chart.sankey (product demo)</a> and <a href="http://bost.ocks.org/mike/sankey/">Sankey Diagrams</a>. See also <a href="https://www.reddit.com/r/Terraria/comments/3nptp5/tried_building_a_directed_graph_of_all_terraria/">this reddit post</a>.</p>
+
+    <p>Note: the input date contains cycles, breaking the library code: the graph never finishes, or crashes the browser tab. The version in this page ignores (removes) all cycles, showing only a subset of all recipes.</p>
+
+    <div id="chart"></div>
+
+    <script>
+      function remove_cycles(g) {
+        var out = {
+          'nodes': [],
+          'links': []
+        };
+        // Reverse adjacency list.
+        // revadj[x] is a list of all ingredients that result in x.
+        var revadj = [];
+
+        // Cloning the nodes.
+        g.nodes.forEach(function(node, index) {
+          out.nodes[index] = {
+            // I'm ignoring any other attribute from the input node.
+            'name': node.name,
+            'outdegree': 0,
+            'indegree': 0
+          };
+          revadj[index] = [];
+        });
+
+        // Calculating the indegree and filling up revadj list.
+        g.links.forEach(function(link, index) {
+          out.nodes[link.target].indegree += 1;
+          out.nodes[link.source].outdegree += 1;
+          revadj[link.target].push(link.source);
+        });
+
+        // Initializing the FIFO with sink nodes.
+        var fifo = [];
+        out.nodes.forEach(function(node, index) {
+          if (node.outdegree === 0) {
+            fifo.push(index);
+          }
+        });
+
+        // The main algorithm loop.
+        while (fifo.length > 0) {
+          var node_index = fifo.shift();
+          revadj[node_index].forEach(function(other_index) {
+            out.links.push({
+              'target': node_index,
+              'source': other_index,
+              'value': 0.0625
+            });
+            out.nodes[other_index].outdegree -= 1;
+            if (out.nodes[other_index].outdegree === 0) {
+              fifo.push(other_index);
+            }
+          });
+        }
+
+        // Cleaning up.
+        out.nodes.forEach(function(node, index) {
+          delete node.outdegree;
+          delete node.indegree;
+        });
+
+        return out;
+      }
+
+      var colors = {
+            'environment':         '#edbd00',
+            'social':              '#367d85',
+            'animals':             '#97ba4c',
+            'health':              '#f5662b',
+            'research_ingredient': '#3f3e47',
+            'fallback':            '#9f9fa3'
+          };
+      d3.json('terraria_d3_digraph.json', function(error, json) {
+        if (error) throw error;
+
+        var graph = remove_cycles(json);
+
+        var svg = d3.select('#chart').append('svg');
+        svg.attr('height', graph.nodes.length * 10)
+
+        var chart = svg.chart('Sankey.Path');
+        chart
+          .name(function(node) {
+            return node.name;
+          })
+          .colorNodes(function(name, node) {
+            return colors.fallback;
+          })
+          .colorLinks(function(link) {
+            return colors.fallback;
+          })
+          .nodeWidth(10)
+          .nodePadding(1)
+          .spread(false)
+          .iterations(9)
+          .draw(graph);
+      });
+    </script>
+  </body>
+</html>
